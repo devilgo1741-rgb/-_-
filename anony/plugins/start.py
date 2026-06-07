@@ -28,6 +28,21 @@ async def start(_, message: types.Message):
     if len(message.command) > 1 and message.command[1] == "help":
         return await _help(_, message)
 
+    try:
+        anim = await message.reply_text("⏳ <code>Starting</code>")
+        await asyncio.sleep(0.4)
+        await anim.edit_text("⏳ <code>Starting•</code>")
+        await asyncio.sleep(0.4)
+        await anim.edit_text("⏳ <code>Starting••</code>")
+        await asyncio.sleep(0.4)
+        await anim.edit_text("⏳ <code>Starting•••</code>")
+        await asyncio.sleep(0.4)
+        await anim.edit_text(f"✅ <b>{app.name}</b> <code>Started!</code>")
+        await asyncio.sleep(0.5)
+        await anim.delete()
+    except Exception:
+        pass
+
     private = message.chat.type == enums.ChatType.PRIVATE
     _text = (
         message.lang["start_pm"].format(message.from_user.first_name, app.name)

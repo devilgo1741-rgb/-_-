@@ -6,8 +6,8 @@
 from ntgcalls import (ConnectionNotFound, TelegramServerError,
                       RTMPStreamingUnsupported, ConnectionError)
 from pyrogram.errors import (ChatSendMediaForbidden, ChatSendPhotosForbidden,
-                             MessageIdInvalid)
-from pyrogram.types import InputMediaPhoto, Message
+                             ChatSendGifsForbidden, MessageIdInvalid)
+from pyrogram.types import InputMediaAnimation, Message
 from pytgcalls import PyTgCalls, exceptions, types
 from pytgcalls.pytgcalls_session import PyTgCallsSession
 
@@ -51,11 +51,7 @@ class TgCall(PyTgCalls):
     ) -> None:
         client = await db.get_assistant(chat_id)
         _lang = await lang.get_lang(chat_id)
-        _thumb = (
-            await thumb.generate(media)
-            if isinstance(media, Track)
-            else config.DEFAULT_THUMB
-        ) if config.THUMB_GEN else None
+        _anim = config.PLAY_ANIMATION
 
         if not media.file_path:
             await message.edit_text(_lang["error_no_file"].format(config.SUPPORT_CHAT))
@@ -90,25 +86,23 @@ class TgCall(PyTgCalls):
                 )
                 keyboard = buttons.controls(chat_id)
                 try:
-                    if _thumb:
-                        await message.edit_media(
-                            media=InputMediaPhoto(
-                                media=_thumb,
-                                caption=text,
-                            ),
-                            reply_markup=keyboard,
-                        )
-                    else:
-                        await message.edit_text(text, reply_markup=keyboard)
-                except (ChatSendMediaForbidden, ChatSendPhotosForbidden, MessageIdInvalid):
-                    if _thumb:
-                        sent = await app.send_photo(
+                    await message.edit_media(
+                        media=InputMediaAnimation(
+                            media=_anim,
+                            caption=text,
+                        ),
+                        reply_markup=keyboard,
+                    )
+                except (ChatSendMediaForbidden, ChatSendPhotosForbidden,
+                        ChatSendGifsForbidden, MessageIdInvalid):
+                    try:
+                        sent = await app.send_animation(
                             chat_id=chat_id,
-                            photo=_thumb,
+                            animation=_anim,
                             caption=text,
                             reply_markup=keyboard,
                         )
-                    else:
+                    except Exception:
                         sent = await app.send_message(
                             chat_id=chat_id,
                             text=text,
