@@ -34,9 +34,27 @@ class YouTube:
             r"(?!/(watch\?v=[A-Za-z0-9_-]{11}|shorts/[A-Za-z0-9_-]{11}"
             r"|playlist\?list=PL[A-Za-z0-9_-]+|[A-Za-z0-9_-]{11}))\S*"
         )
+        os.makedirs(self.cookie_dir, exist_ok=True)
+        self._load_env_cookies()
+
+    def _load_env_cookies(self):
+        cookies_txt = os.getenv("COOKIES_TXT", "").strip()
+        if cookies_txt:
+            cookie_path = f"{self.cookie_dir}/env_cookies.txt"
+            try:
+                import base64
+                decoded = base64.b64decode(cookies_txt).decode("utf-8")
+                with open(cookie_path, "w") as f:
+                    f.write(decoded)
+                logger.info("Cookies loaded from COOKIES_TXT env var.")
+            except Exception:
+                with open(cookie_path, "w") as f:
+                    f.write(cookies_txt)
+                logger.info("Cookies loaded from COOKIES_TXT env var (plain text).")
 
     def get_cookies(self):
         if not self.checked:
+            self.cookies = []
             for file in os.listdir(self.cookie_dir):
                 if file.endswith(".txt"):
                     self.cookies.append(f"{self.cookie_dir}/{file}")
@@ -44,7 +62,7 @@ class YouTube:
         if not self.cookies:
             if not self.warned:
                 self.warned = True
-                logger.warning("Cookies are missing; downloads might fail.")
+                logger.warning("Cookies are missing; using mobile client fallback.")
             return None
         return random.choice(self.cookies)
 
@@ -52,12 +70,20 @@ class YouTube:
         logger.info("Saving cookies from urls...")
         async with aiohttp.ClientSession() as session:
             for url in urls:
-                name = url.split("/")[-1]
-                link = "https://batbin.me/raw/" + name
-                async with session.get(link) as resp:
-                    resp.raise_for_status()
-                    with open(f"{self.cookie_dir}/{name}.txt", "wb") as fw:
-                        fw.write(await resp.read())
+                try:
+                    name = url.rstrip("/").split("/")[-1]
+                    if "batbin.me" in url:
+                        fetch_url = "https://batbin.me/raw/" + name
+                    else:
+                        fetch_url = url
+                    async with session.get(fetch_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                        resp.raise_for_status()
+                        with open(f"{self.cookie_dir}/{name}.txt", "wb") as fw:
+                            fw.write(await resp.read())
+                    logger.info(f"Cookie saved: {name}.txt")
+                except Exception as e:
+                    logger.warning(f"Failed to save cookie from {url}: {e}")
+        self.checked = False
         logger.info(f"Cookies saved in {self.cookie_dir}.")
 
     def valid(self, url: str) -> bool:
@@ -119,6 +145,7 @@ class YouTube:
             return filename
 
         cookie = self.get_cookies()
+
         base_opts = {
             "outtmpl": "downloads/%(id)s.%(ext)s",
             "quiet": True,
@@ -127,8 +154,24 @@ class YouTube:
             "no_warnings": True,
             "overwrites": False,
             "nocheckcertificate": True,
-            "cookiefile": cookie,
+            "retries": 3,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["ios", "android", "mweb", "web"],
+                    "player_skip": ["webpage"],
+                }
+            },
+            "http_headers": {
+                "User-Agent": (
+                    "Mozilla/5.0 (Linux; Android 12; SM-G991B) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Mobile Safari/537.36"
+                ),
+            },
         }
+
+        if cookie:
+            base_opts["cookiefile"] = cookie
 
         if video:
             ydl_opts = {
@@ -139,18 +182,19 @@ class YouTube:
         else:
             ydl_opts = {
                 **base_opts,
-                "format": "bestaudio[ext=webm][acodec=opus]",
+                "format": "bestaudio[ext=webm][acodec=opus]/bestaudio/best",
             }
 
         def _download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 try:
                     ydl.download([url])
-                except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError):
+                    return filename if Path(filename).exists() else None
+                except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError) as e:
+                    logger.warning("yt-dlp download error: %s", str(e)[:200])
                     return None
                 except Exception as ex:
                     logger.warning("Download failed: %s", ex)
                     return None
-            return filename
 
         return await asyncio.to_thread(_download)
