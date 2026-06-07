@@ -30,7 +30,7 @@ async def _broadcast(_, message: types.Message):
 
     if "-nochat" not in message.command:
         groups = set(await db.get_chats())
-    if "-user" in message.command:
+    if "-nouser" not in message.command:
         users = set(await db.get_users())
 
     chats = list(groups | users)
