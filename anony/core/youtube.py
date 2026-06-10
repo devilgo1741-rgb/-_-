@@ -11,6 +11,17 @@ import asyncio
 import aiohttp
 from pathlib import Path
 
+# Patch py_yt API key at import time so Railway fresh Docker installs use our key
+try:
+    import py_yt.core.constants as _yt_const
+    import py_yt.core.video as _yt_video
+    _YT_API_KEY = os.getenv("YOUTUBE_API_KEY", "AIzaSyBza3ew7sdakHkF3irNQwRotoXi_6q84ug")
+    _yt_const.searchKey = _YT_API_KEY
+    for _client in _yt_video.CLIENTS.values():
+        _client["api_key"] = _YT_API_KEY
+except Exception:
+    pass
+
 from py_yt import Playlist, VideosSearch
 
 from anony import logger
