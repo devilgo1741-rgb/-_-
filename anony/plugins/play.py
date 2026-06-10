@@ -3,6 +3,7 @@
 # This file is part of AnonXMusic
 
 
+import glob
 from pathlib import Path
 
 from pyrogram import filters, types
@@ -19,6 +20,15 @@ def playlist_to_queue(chat_id: int, tracks: list) -> str:
         text += f"<b>{pos}.</b> {track.title}\n"
     text = text[:1948] + "</blockquote>"
     return text
+
+
+def find_file(video_id: str, video: bool) -> str | None:
+    """Find downloaded file for a video ID regardless of extension."""
+    matches = glob.glob(f"downloads/{video_id}.*")
+    if matches:
+        return matches[0]
+    return None
+
 
 @app.on_message(
     filters.command(["play", "playforce", "vplay", "vplayforce"])
@@ -116,9 +126,10 @@ async def play_hndlr(
             return
 
     if not file.file_path:
-        fname = f"downloads/{file.id}.{'mp4' if video else 'webm'}"
-        if Path(fname).exists():
-            file.file_path = fname
+        # Check if already downloaded (any extension)
+        existing = find_file(file.id, video)
+        if existing:
+            file.file_path = existing
         else:
             await sent.edit_text(m.lang["play_downloading"])
             file.file_path = await yt.download(file.id, video=video)

@@ -5,6 +5,7 @@
 
 import os
 import re
+import glob
 import yt_dlp
 import random
 import asyncio
@@ -46,6 +47,7 @@ class YouTube:
             r"|playlist\?list=PL[A-Za-z0-9_-]+|[A-Za-z0-9_-]{11}))\S*"
         )
         os.makedirs(self.cookie_dir, exist_ok=True)
+        os.makedirs("downloads", exist_ok=True)
         self._load_env_cookies()
 
     def _load_env_cookies(self):
@@ -73,7 +75,7 @@ class YouTube:
         if not self.cookies:
             if not self.warned:
                 self.warned = True
-                logger.warning("Cookies are missing; using mobile client fallback.")
+                logger.warning("Cookies missing; using mobile client fallback.")
             return None
         return random.choice(self.cookies)
 
@@ -83,10 +85,7 @@ class YouTube:
             for url in urls:
                 try:
                     name = url.rstrip("/").split("/")[-1]
-                    if "batbin.me" in url:
-                        fetch_url = "https://batbin.me/raw/" + name
-                    else:
-                        fetch_url = url
+                    fetch_url = "https://batbin.me/raw/" + name if "batbin.me" in url else url
                     async with session.get(fetch_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                         resp.raise_for_status()
                         with open(f"{self.cookie_dir}/{name}.txt", "wb") as fw:
@@ -102,6 +101,13 @@ class YouTube:
 
     def invalid(self, url: str) -> bool:
         return bool(re.match(self.iregex, url))
+
+    def _find_downloaded(self, video_id: str) -> str | None:
+        """Find the actual downloaded file regardless of extension."""
+        matches = glob.glob(f"downloads/{video_id}.*")
+        if matches:
+            return matches[0]
+        return None
 
     async def search(self, query: str, m_id: int, video: bool = False) -> Track | None:
         try:
@@ -149,11 +155,11 @@ class YouTube:
 
     async def download(self, video_id: str, video: bool = False) -> str | None:
         url = self.base + video_id
-        ext = "mp4" if video else "webm"
-        filename = f"downloads/{video_id}.{ext}"
 
-        if Path(filename).exists():
-            return filename
+        # Check if already downloaded (any extension)
+        existing = self._find_downloaded(video_id)
+        if existing:
+            return existing
 
         cookie = self.get_cookies()
 
@@ -165,11 +171,11 @@ class YouTube:
             "no_warnings": True,
             "overwrites": False,
             "nocheckcertificate": True,
-            "retries": 3,
+            "retries": 5,
+            "fragment_retries": 5,
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["ios", "android", "mweb", "web"],
-                    "player_skip": ["webpage"],
+                    "player_client": ["tv_embed", "web_creator", "android", "web"],
                 }
             },
             "http_headers": {
@@ -187,25 +193,31 @@ class YouTube:
         if video:
             ydl_opts = {
                 **base_opts,
-                "format": "(bestvideo[height<=?720][width<=?1280][ext=mp4])+(bestaudio)",
+                "format": "bestvideo[height<=?720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=?720]+bestaudio/best[height<=?720]/best",
                 "merge_output_format": "mp4",
             }
         else:
             ydl_opts = {
                 **base_opts,
-                "format": "bestaudio[ext=webm][acodec=opus]/bestaudio/best",
+                # Prefer audio-only; falls back to best combined (pytgcalls extracts audio)
+                "format": "bestaudio[acodec=opus]/bestaudio[ext=m4a]/bestaudio/best",
             }
 
         def _download():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                try:
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([url])
-                    return filename if Path(filename).exists() else None
-                except (yt_dlp.utils.DownloadError, yt_dlp.utils.ExtractorError) as e:
-                    logger.warning("yt-dlp download error: %s", str(e)[:200])
-                    return None
-                except Exception as ex:
-                    logger.warning("Download failed: %s", ex)
-                    return None
+            except yt_dlp.utils.DownloadError as e:
+                logger.warning("yt-dlp DownloadError: %s", str(e)[:300])
+                return None
+            except Exception as ex:
+                logger.warning("Download exception: %s", ex)
+                return None
+
+            # Find the actual downloaded file (extension may differ)
+            result = self._find_downloaded(video_id)
+            if not result:
+                logger.warning("Download completed but file not found: %s", video_id)
+            return result
 
         return await asyncio.to_thread(_download)
